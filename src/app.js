@@ -6,13 +6,13 @@ import {
   getMeterDetails,
   getMeterConsumption,
   getMeterGeo,
-  listExportMeters,
 } from "./services/meterService.js";
 
 const app = express();
 
 app.use(express.json());
 
+// API information
 app.get("/", (req, res) => {
   res.json({
     message: "Urja Meter Operations API",
@@ -23,11 +23,13 @@ app.get("/", (req, res) => {
       meterDetails: "/api/v1/meters/:meterId",
       consumption: "/api/v1/meters/:meterId/consumption",
       location: "/api/v1/meters/:meterId/geo",
-      export: "/api/v1/meters/export",
+      documentation: "/docs",
+      openapi: "/openapi.json",
     },
   });
 });
 
+// Health check
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
@@ -89,39 +91,21 @@ app.get("/api/v1/meters/:meterId/geo", async (req, res, next) => {
   }
 });
 
-// Export meter data
-app.get("/api/v1/meters/export", async (req, res, next) => {
-  try {
-    const page = Number.parseInt(req.query.page ?? "1", 10);
-
-    if (!Number.isInteger(page) || page < 1) {
-      return res.status(400).json({
-        error: "Invalid page",
-        message: "page must be a positive integer",
-      });
-    }
-
-    const result = await listExportMeters({ page });
-    res.json(result);
-  } catch (error) {
-    next(error);
-  }
-});
-
+// Serve the OpenAPI specification
 app.get("/openapi.json", (req, res) => {
   res.json(openapi);
 });
 
+// Swagger UI documentation
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(openapi));
 
 // Centralized error handler
-
 app.use((error, req, res, next) => {
+  // Log safe diagnostic details without exposing raw upstream response data.
   console.error("API request failed:", {
     message: error.message,
     code: error.code,
     status: error.response?.status,
-    upstreamData: error.response?.data,
   });
 
   if (res.headersSent) {
