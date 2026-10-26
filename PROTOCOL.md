@@ -1,77 +1,111 @@
-# Protocol and Integration Notes
+# Protocol Notes: Urja Meter Ops
 
-## Overview
+## Purpose
 
-This application provides a REST interface over the legacy Urja Operations portal. The Express API receives client requests, delegates the work to the service layer, and uses an Axios client to communicate with the upstream portal.
-
-## Request Flow
-
-1. A client sends a request to the Express API.
-2. The route validates relevant request parameters.
-3. The service layer calls the portal client.
-4. The portal client authenticates when necessary.
-5. The upstream response is normalized by the service layer.
-6. The API returns a JSON response or a structured error.
-
-## Authentication
-
-The portal client uses environment-based credentials:
-
-- `URJA_BASE_URL`
-- `URJA_USERNAME`
-- `URJA_PASSWORD`
-
-The login request submits URL-encoded credentials to `/login` and includes the headers expected by the portal.
-
-The client uses `axios-cookiejar-support` and `tough-cookie` to retain cookies between requests.
-
-A shared login promise prevents multiple simultaneous requests from initiating separate initial login operations.
-
-## Session Recovery
-
-The client detects unauthorized responses using HTTP status `401`.
-
-When a protected request receives an unauthorized response, the client can attempt reauthentication and retry the original request once.
-
-The retry must be limited to one attempt per request to prevent infinite loops.
-
-Actual expired-session behavior depends on how the upstream portal responds. Session recovery should be tested against the portal, including failed login and concurrent unauthorized requests.
+This document describes how the Flock Energy Meter API communicates with the legacy Urja Meter Ops portal. It records the observed request patterns, authentication approach, available meter data, normalization behavior, and areas requiring further verification.
 
 ## Upstream Endpoints
 
-| Operation             | Upstream endpoint                    |
-| --------------------- | ------------------------------------ |
-| Login                 | `POST /login`                        |
-| Meter search          | `GET /portal/meters/search`          |
-| Meter energy          | `GET /portal/meters/:meterId/energy` |
-| Meter location        | `GET /portal/meters/:meterId/geo`    |
-| Signing key retrieval | `GET /portal/keys`                   |
-| Signed export         | `GET /portal/export`                 |
+| Operation      | HTTP Request                          | Purpose                                                                 |
+| -------------- | ------------------------------------- | ----------------------------------------------------------------------- |
+| Login          | `POST /login`                         | Establish a portal session                                              |
+| Meter search   | `GET /portal/meters/search?q=&page=1` | Search and list meters                                                  |
+| Meter energy   | `GET /portal/meters/{meterId}/energy` | Retrieve consumption readings                                           |
+| Meter location | `GET /portal/meters/{meterId}/geo`    | Retrieve geographical coordinates                                       |
+| Signing key    | `GET /portal/keys`                    | Retrieve the secret used by the internal export flow                    |
+| Signed export  | `GET /portal/export?page=...`         | Internal signed-export capability, not exposed as a public API endpoint |
 
-The signing-key and export operations are internal client capabilities and are not necessarily exposed as public API endpoints.
+## Authentication and Session Management
+
+The client submits URL-encoded `email` and `password` fields to the portal's `/login` endpoint.
+
+The login request includes headers observed during investigation, including:
+
+- `Content-Type: application/x-www-form-urlencoded`
+- `Origin`
+- `Referer`
+- `X-Sveltekit-Action`
+
+The response is checked for the expected redirect-style login result.
+
+### Cookie Persistence
+
+The client uses `tough-cookie` with `axios-cookiejar-support` to retain session cookies between requests. This allows subsequent protected requests to reuse the portal session without manually handling cookie headers in each service.
+
+### Shared Login Attempt
+
+The client tracks authentication state and uses a shared login promise so that concurrent initial requests can wait for the same login operation rather than each starting a separate login.
+
+### Expired Sessions
+
+The client includes response-interceptor logic intended to detect `401 Unauthorized`, reauthenticate, and retry an eligible request once.
+
+This behavior requires dedicated tests for expired cookies, concurrent unauthorized responses, successful reauthentication, and failed reauthentication. The existing Express tests mock the service layer and therefore do not prove session recovery end to end.
+
+A `403 Forbidden` response should not automatically be treated as an expired session unless that behavior is confirmed through observation and testing.
+
+## Data Available Through the Portal
+
+### Meter Metadata
+
+The meter search endpoint accepts a search query and page number and returns meter records with pagination metadata.
+
+During development, the portal reported 403 meters. A sample record used in testing had the following fields:
+
+- Meter ID: `J100000`
+- Serial number: `SE33962`
+- Make: `HPL`
+- Installation status: `Decommissioned`
+
+These are observations from the investigated portal state and may change.
+
+### Energy Readings
+
+The meter energy endpoint returns an array of readings. Observed fields include:
+
+- `timestamp`
+- `kwh`
+- `kvah`
+- `voltR`
+
+The numeric fields may arrive as strings from the upstream portal.
+
+### Geographical Coordinates
+
+The geo endpoint returns latitude and longitude. The wrapper normalizes valid coordinate values into JSON numbers.
 
 ## Data Normalization
 
-The service layer converts numeric strings to numbers where appropriate. Missing or invalid numeric values are represented as `null`, and timestamps are preserved as strings.
+The service layer normalizes upstream values before returning them to API consumers.
 
-This gives consumers a more consistent response format than exposing the legacy portal's raw payloads.
+- Valid numeric strings are converted into JSON numbers.
+- Missing or invalid numeric values become `null`.
+- Timestamp strings are preserved rather than reformatted without certainty about their format and timezone.
+- The public API exposes structured JSON rather than forwarding raw upstream payloads unchanged.
+
+This keeps the public API more consistent and reduces the amount of portal-specific parsing required by downstream consumers.
+
+## Signed Export Capability
+
+The client contains an internal signed-export flow.
+
+The flow retrieves a signing secret from `/portal/keys`, constructs a canonical message using the HTTP method, path, query string, and Unix timestamp, and creates an HMAC-SHA256 signature.
+
+The public export route was removed from the API contract. The signing secret must never be returned to callers or written to logs.
 
 ## Error Handling
 
-The application handles invalid parameters, missing meters, and upstream failures.
+The wrapper validates pagination input, returns `404` when a requested meter cannot be found, and maps upstream failures to a safe `502` response.
 
-Upstream errors should be logged without exposing credentials, cookies, signing secrets, or other sensitive data. Public API responses should avoid leaking internal implementation details.
+The service depends on the upstream portal's availability, endpoint contracts, authentication behavior, and response formats.
 
-## Security Considerations
+## Known Limitations and Future Investigation
 
-- Keep `.env` out of version control.
-- Use `.env.example` only for placeholder values.
-- Never log authentication credentials or session cookies.
-- Use HTTPS for production traffic.
-- Keep dependencies updated.
-- Restrict retries to appropriate requests.
-- Avoid exposing internal signing secrets through public responses.
+- Add dedicated tests for cookie persistence and expired-session recovery.
+- Confirm whether any authentication failures use `403` rather than `401`.
+- Investigate whether the portal's hierarchy data can be reconstructed reliably.
+- Evaluate whether a bulk export path should be exposed in a future version.
+- Define freshness requirements before introducing caching.
+- Evaluate local indexing only when there is a demonstrated need for cross-attribute or spatial queries.
 
-## Known Limitations
-
-The integration depends on the legacy portal's endpoint contracts, authentication behavior, and response formats. Changes to those contracts may require updates to the client or normalization layer.
+Unverified behaviors are intentionally documented as areas for further investigation rather than proven facts.

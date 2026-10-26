@@ -1,81 +1,21 @@
 # Engineering Reflection
 
-## Design Decisions
+## 1. What assumptions did I make?
 
-### Separation of Responsibilities
+I assumed the legacy portal should be treated as a read-only system and that its existing login flow and session cookies could be reused to retrieve meter information. I also assumed that numeric strings should be converted into numbers where valid, while missing or invalid numeric values should be represented as `null`. I preserved timestamps as strings rather than assuming their format or timezone.
 
-The application separates upstream communication, business logic, request handling, and data normalization.
+## 2. Which part was the most difficult, and how did I get unstuck?
 
-- The client layer manages HTTP requests, authentication, and cookies.
-- The service layer combines upstream data and normalizes responses.
-- The Express application handles routes, validation, and error responses.
-- The OpenAPI specification documents the public API contract.
+The most challenging part was integrating with a portal designed primarily for browser interaction rather than direct API consumers. I investigated its network requests, identified the login request and required headers, and implemented cookie persistence using Axios and a cookie jar. Separating the client, service, normalization, and routing layers helped me isolate issues and keep the implementation manageable.
 
-This structure improves maintainability and makes individual layers easier to test.
+## 3. If I had another day, what would I improve?
 
-### Session Management
+I would add dedicated tests for cookie persistence, expired sessions, concurrent unauthorized requests, and failed reauthentication. I would also add integration tests against a controlled mock server, improve structured logging without exposing sensitive information, and configure continuous integration. After improving reliability, I would investigate network hierarchy reconstruction and caching based on actual product requirements.
 
-The legacy portal uses cookie-based authentication. A persistent cookie jar allows session cookies to be reused across requests.
+## 4. What mistake did I make while solving this?
 
-A shared login promise avoids duplicate initial login attempts when multiple requests arrive concurrently.
+During development, I encountered package installation and test-discovery issues, and I needed to correct the Git setup before preparing the repository. These experiences taught me to inspect command output carefully, make incremental changes, and verify the test and version-control configuration instead of assuming everything was configured correctly.
 
-Unauthorized-response recovery is designed to reauthenticate and retry a request once. This behavior requires dedicated tests and verification against the real portal's session-expiration behavior.
+## 5. If I were reviewing my own submission, what would I criticise?
 
-### Data Normalization
-
-The upstream portal may return numeric values as strings. Converting valid numeric strings into numbers creates a more consistent API contract and simplifies client-side processing.
-
-Invalid or missing numeric values are represented as `null` rather than silently treated as zero.
-
-### API Documentation
-
-OpenAPI provides a machine-readable description of the API, while Swagger UI makes it easier to explore endpoints and inspect example responses.
-
-Keeping documentation aligned with actual response structures reduces integration confusion.
-
-## Testing Strategy
-
-Vitest and Supertest are used to test the Express application without requiring the upstream portal for every test.
-
-The current test suite covers:
-
-- Health-check behavior
-- Meter listing and pagination
-- Invalid pagination
-- Combined meter details
-- Missing meters
-- Consumption readings
-- Geographical coordinates
-- Upstream failure handling
-
-Service mocking makes these tests deterministic. However, mocked tests do not establish that real portal authentication, cookie persistence, or session recovery works under every condition.
-
-## Challenges and Lessons Learned
-
-### Legacy Authentication
-
-Integrating with an existing portal requires reproducing its expected login request and retaining session cookies. Authentication behavior should be verified against actual portal responses rather than inferred from status codes alone.
-
-### Consistent Responses
-
-Normalization and centralized error handling help keep the public API predictable even when upstream responses are inconsistent.
-
-### Testing Boundaries
-
-Mocking the service layer isolates route behavior, but integration tests are still needed to verify communication with the actual upstream client.
-
-## Future Improvements
-
-- Add dedicated authentication-recovery tests.
-- Add integration tests for cookie persistence and expired sessions.
-- Improve structured logging and request tracing without logging secrets.
-- Add rate limiting and appropriate request validation for production deployments.
-- Define timeouts and retry policies based on upstream behavior.
-- Add continuous integration to run tests on every change.
-- Review the API contract whenever the upstream portal changes.
-
-## Conclusion
-
-The project demonstrates how to wrap a legacy authenticated service with a documented REST API while separating responsibilities, normalizing data, and testing key application behaviors.
-
-The main remaining areas for improvement are integration-level authentication testing, operational observability, and production security hardening.
+The eight tests validate API route behavior by mocking the service layer, but they do not prove that live portal authentication or expired-session recovery works end to end. I would ask for dedicated tests of the upstream client, stronger verification of session-expiration behavior, and confirmation that the static OpenAPI specification matches the specification served by the application. I would also expect the README to state the project's scope and remaining limitations clearly.
